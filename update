@@ -10,14 +10,15 @@ if ( !empty( $args[0] ) ) {
 
 switch ( $type ) {
 	case 'readme':
-		$directory = 'readmes';
-		$download = 'readmes/%s.readme';
-		$url = 'http://plugins.svn.wordpress.org/%s/trunk/readme.txt';
+		$target_directory = 'readmes';
+		$download_location = 'readmes/{PLUGIN}.readme';
+		$download_url = 'http://plugins.svn.wordpress.org/{PLUGIN}/trunk/readme.txt';
 		break;
 	case 'all':
-		$directory = 'plugins';
-		$download = 'zips/%s.zip';
-		$url = 'http://downloads.wordpress.org/plugin/%s.latest-stable.zip?nostats=1';
+		$target_directory = 'plugins';
+		$download_location = 'zips/{PLUGIN}.zip';
+		$zip_folder = 'zips';
+		$download_url = 'http://downloads.wordpress.org/plugin/{PLUGIN}.latest-stable.zip?nostats=1';
 		break;
 	default:
 		echo $cmd . ": invalid command\r\n";
@@ -41,8 +42,8 @@ try {
 }
 $svn_last_revision = (int) $matches[1];
 echo "Most recent SVN revision: " . $svn_last_revision . "\r\n";
-if ( file_exists( $directory . '/.last-revision' ) ) {
-	$last_revision = (int) file_get_contents( $directory . '/.last-revision' );
+if ( file_exists( $target_directory . '/.last-revision' ) ) {
+	$last_revision = (int) file_get_contents( $target_directory . '/.last-revision' );
 	echo "Last synced revision: " . $last_revision . "\r\n";
 } else {
 	$last_revision = false;
@@ -62,32 +63,26 @@ if ( $last_revision != $svn_last_revision ) {
 		preg_match_all( '#<li><a href="([^/]+)/">([^/]+)/</a></li>#', $plugins, $matches );
 		$plugins = $matches[1];
 	}
+	// Stash the list in a temporary file,
+	// as the list may be too long to store in a bash variable.
+	file_put_contents( $target_directory . '/.to_download', implode( "\n", $plugins ) );
 
-	foreach ( $plugins as $plugin ) {
-		$plugin = urldecode( $plugin );
-		echo "Updating " . $plugin;
+	// Take the URL download list and make parallel wget requests.
+	$command = 'cat ' . escapeshellarg( $target_directory . '/.to_download' ) . ' | xargs -n 1 -P 12 -I {PLUGIN} wget --quiet -O ' . escapeshellarg( $download_location ) . ' ' . escapeshellarg( $download_url );
+	exec( $command );
 
-		$output = null; $return = null;
-		exec( 'wget -q -np -O ' . escapeshellarg( sprintf($download, $plugin) ) . ' ' . escapeshellarg( sprintf($url, $plugin) ) . ' > /dev/null', $output, $return );
-
-		if ( $return === 0 && file_exists( sprintf($download, $plugin) ) ) {
-			if ($type === 'all') {
-				if ( file_exists( 'plugins/' . $plugin ) )
-					exec( 'rm -rf ' . escapeshellarg( 'plugins/' . $plugin ) );
-
-				exec( 'unzip -o -d plugins ' . escapeshellarg( 'zips/' . $plugin . '.zip' ) );
-				exec( 'rm -rf ' . escapeshellarg( 'zips/' . $plugin . '.zip' ) );
-			}
-		} else {
-			echo '... download failed.';
-		}
-		echo "\r\n";
+	if ( $type === 'all' ) {
+		// Unzip all zipfiles into the plugins directory.
+		exec( 'find ' . $zip_folder . ' -size +0 -name *.zip | xargs -n 1 unzip -o -d plugins' );
+		// Remove the lingering zip files.
+		exec( 'find ' . $zip_folder . ' -name *.zip | xargs -n 1 rm' );
 	}
 
-	if ( file_put_contents( $directory . '/.last-revision', $svn_last_revision ) )
-		echo "[CLEANUP] Updated $directory/.last-revision to " . $svn_last_revision . "\r\n";
+	// Store the SVN revision number for intelligently updating next time around.
+	if ( file_put_contents( $target_directory . '/.last-revision', $svn_last_revision ) )
+		echo "[CLEANUP] Updated $target_directory/.last-revision to " . $svn_last_revision . "\r\n";
 	else
-		echo "[ERROR] Could not update $directory/.last-revision to " . $svn_last_revision . "\r\n";
+		echo "[ERROR] Could not update $target_directory/.last-revision to " . $svn_last_revision . "\r\n";
 }
 
 $end_time = time();

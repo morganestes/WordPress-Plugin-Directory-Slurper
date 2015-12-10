@@ -1,4 +1,4 @@
-#!/usr/bin/php
+#!/usr/bin/env php
 <?php
 $args = $argv;
 $cmd = array_shift( $args );
@@ -7,18 +7,19 @@ $type = 'all';
 if ( !empty( $args[0] ) ) {
 	$type = $args[0];
 }
+setlocale(LC_CTYPE, "en_US.UTF-8");
 
 switch ( $type ) {
 	case 'readme':
 		$target_directory = 'readmes';
 		$download_location = 'readmes/{PLUGIN}.readme';
-		$download_url = 'http://plugins.svn.wordpress.org/{PLUGIN}/trunk/readme.txt';
+		$download_url = 'https://plugins.svn.wordpress.org/{PLUGIN}/trunk/readme.txt';
 		break;
 	case 'all':
 		$target_directory = 'plugins';
 		$download_location = 'zips/{PLUGIN}.zip';
 		$zip_folder = 'zips';
-		$download_url = 'http://downloads.wordpress.org/plugin/{PLUGIN}.latest-stable.zip?nostats=1';
+		$download_url = 'https://downloads.wordpress.org/plugin/{PLUGIN}.latest-stable.zip?nostats=1';
 		break;
 	default:
 		echo $cmd . ": invalid command\r\n";
@@ -31,7 +32,7 @@ switch ( $type ) {
 
 echo "Determining most recent SVN revision...\r\n";
 try {
-	$changelog = @file_get_contents( 'http://plugins.trac.wordpress.org/log/?format=changelog&stop_rev=HEAD' );
+	$changelog = @file_get_contents( 'https://plugins.trac.wordpress.org/log/?format=changelog&stop_rev=HEAD' );
 	if ( !$changelog )
 		throw new Exception( 'Could not fetch the SVN changelog' );
 	preg_match( '#\[([0-9]+)\]#', $changelog, $matches );
@@ -54,12 +55,12 @@ $start_time = time();
 
 if ( $last_revision != $svn_last_revision ) {
 	if ( $last_revision ) {
-		$changelog_url = sprintf( 'http://plugins.trac.wordpress.org/log/?verbose=on&mode=follow_copy&format=changelog&rev=%d&limit=%d', $svn_last_revision, $svn_last_revision - $last_revision );
+		$changelog_url = sprintf( 'https://plugins.trac.wordpress.org/log/?verbose=on&mode=follow_copy&format=changelog&rev=%d&limit=%d', $svn_last_revision, $svn_last_revision - $last_revision );
 		$changes = file_get_contents( $changelog_url );
 		preg_match_all( '#^' . "\t" . '*\* ([^/A-Z ]+)[ /].* \((added|modified|deleted|moved|copied)\)' . "\n" . '#m', $changes, $matches );
 		$plugins = array_unique( $matches[1] );
 	} else {
-		$plugins = file_get_contents( 'http://svn.wp-plugins.org/' );
+		$plugins = file_get_contents( 'https://plugins.svn.wordpress.org/' );
 		preg_match_all( '#<li><a href="([^/]+)/">([^/]+)/</a></li>#', $plugins, $matches );
 		$plugins = $matches[1];
 	}
@@ -68,14 +69,18 @@ if ( $last_revision != $svn_last_revision ) {
 	file_put_contents( $target_directory . '/.to_download', implode( "\n", $plugins ) );
 
 	// Take the URL download list and make parallel wget requests.
-	$command = 'cat ' . escapeshellarg( $target_directory . '/.to_download' ) . ' | xargs -n 1 -P 12 -I {PLUGIN} wget --quiet -O ' . escapeshellarg( $download_location ) . ' ' . escapeshellarg( $download_url );
+	$command = sprintf('cat %s | xargs -t -n 1 -P 12 -I {PLUGIN} wget --quiet -O %s %s',
+						escapeshellarg( $target_directory . '/.to_download' ),
+						escapeshellarg( $download_location ),
+						escapeshellarg( $download_url )
+					);
 	exec( $command );
 
 	if ( $type === 'all' ) {
 		// Unzip all zipfiles into the plugins directory.
-		exec( 'find ' . $zip_folder . ' -size +0 -name *.zip | xargs -n 1 unzip -o -d plugins' );
+		exec( 'find ' . $zip_folder . ' -size +0 -name *.zip | xargs -t -n 1 unzip -o -d plugins' );
 		// Remove the lingering zip files.
-		exec( 'find ' . $zip_folder . ' -name *.zip | xargs -n 1 rm' );
+		exec( 'find ' . $zip_folder . ' -name *.zip | xargs -t -n 1 rm' );
 	}
 
 	// Store the SVN revision number for intelligently updating next time around.
@@ -88,7 +93,18 @@ if ( $last_revision != $svn_last_revision ) {
 $end_time = time();
 $minutes = ( $end_time - $start_time ) / 60;
 $seconds = ( $end_time - $start_time ) % 60;
+$eol = "\r\n";
+$plugin_count = isset( $plugins ) && is_array( $plugins ) ? count( $plugins ) : 0;
 
+if( $plugin_count > 0 ) {
 echo "[SUCCESS] Done updating plugins!\r\n";
-echo "It took " . number_format($minutes) . " minute" . ( $minutes == 1 ? '' : 's' ) . " and " . $seconds . " second" . ( $seconds == 1 ? '' : 's' ) . " to update ". count($plugins)  ." plugin" . ( count($plugins) == 1 ? '' : 's') . "\r\n";
+printf( "It took %d minute%s and %d second%s to update %d plugin%s.${eol}" ,
+		number_format( $minutes ), ( $minutes !== 1 ? 's' : '' ),
+		number_format( $seconds ), ( $seconds !== 1 ? 's' : '' ),
+		count( $plugins ), ( count( $plugins ) !== 1 ? 's' : '' )
+ 	);
 echo "[DONE]\r\n";
+} else {
+	echo "No plugins needed updating this time.${eol}";
+}
+exit();
